@@ -14,7 +14,7 @@
 
 - **主界面**
 
-<img width="502" height="612" alt="image" src="https://github.com/user-attachments/assets/1baea957-af66-494f-88cc-b60b44528488" />
+<img width="502" height="632" alt="image" src="https://github.com/user-attachments/assets/77eba621-dd7a-4c40-ab9a-6fe09dab4acf" />
 
 
 - **桌面悬浮窗**
