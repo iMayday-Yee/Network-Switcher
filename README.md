@@ -10,6 +10,18 @@
 - **真实流量监控**：集成 `psutil` 读取系统底层网卡物理收发数据，直观验证分流状态。
 - **极低资源开销**：采用事件驱动与对象互调架构同步 UI 状态，支持系统托盘静默常驻。
 
+## 界面预览
+
+- **主界面**
+
+<img width="502" height="612" alt="image" src="https://github.com/user-attachments/assets/1baea957-af66-494f-88cc-b60b44528488" />
+
+
+- **桌面悬浮窗**
+
+<img width="176" height="63" alt="image" src="https://github.com/user-attachments/assets/ccba2eda-9bdd-4a94-ad28-3dbb233a50f0" />
+
+
 ## 环境依赖
 
 - **操作系统**: Windows 10 / 11
