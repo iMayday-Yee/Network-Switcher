@@ -1,4 +1,5 @@
 import os
+import json
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox
@@ -15,6 +16,8 @@ import pystray
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yyy_config.json')
+
 def is_admin():
     """检查是否拥有管理员权限"""
     try:
@@ -25,9 +28,14 @@ def is_admin():
 class FloatingWidget:
     """现代版桌面透明悬浮胶囊组件"""
     def __init__(self, root, app_controller):
+        self.app = app_controller
         self.win = ctk.CTkToplevel(root)
         self.win.overrideredirect(True)
-        self.win.geometry("165x46+100+100")
+        
+        # 读取配置中的坐标，如果没有则默认 100, 100
+        start_x = self.app.config.get("x", 100)
+        start_y = self.app.config.get("y", 100)
+        self.win.geometry(f"165x46+{start_x}+{start_y}")
         self.win.attributes('-topmost', True)
         
         # === 绿幕抠图法消除直角灰底 ===
@@ -36,7 +44,6 @@ class FloatingWidget:
             self.win.attributes("-transparentcolor", transparent_color)
             self.win.configure(fg_color=transparent_color)
         
-        self.app = app_controller
         self.is_locked = False
         self._updating_visually = False
         
@@ -51,6 +58,7 @@ class FloatingWidget:
         self.frame.bind("<ButtonRelease-1>", self.stop_move)
         self.frame.bind("<B1-Motion>", self.do_move)
         self.lbl_status.bind("<ButtonPress-1>", self.start_move)
+        self.lbl_status.bind("<ButtonRelease-1>", self.stop_move)
         self.lbl_status.bind("<B1-Motion>", self.do_move)
         
         self.win.withdraw()
@@ -75,8 +83,13 @@ class FloatingWidget:
         self.y = event.y
 
     def stop_move(self, event):
+        """鼠标松开时，保存最新坐标到配置文件"""
+        if self.is_locked: return
         self.x = None
         self.y = None
+        self.app.config["x"] = self.win.winfo_x()
+        self.app.config["y"] = self.win.winfo_y()
+        self.app.save_config()
 
     def do_move(self, event):
         if self.is_locked: return
@@ -116,7 +129,6 @@ class NetworkSwitcherApp(ctk.CTk):
         super().__init__()
         
         self.title("YYY Network 智能分流系统")
-        # 调整了整体高度以完美适配新顺序
         self.geometry("500x580")
         self.resizable(False, False)
         
@@ -126,12 +138,46 @@ class NetworkSwitcherApp(ctk.CTk):
         self.last_net_io = psutil.net_io_counters(pernic=True)
         self.last_time = time.time()
         
+        # 1. 初始化配置记忆
+        self.config = self.load_config()
+        
         self.setup_tray_icon()
         self.floating_widget = FloatingWidget(self, self)
         
         self.setup_ui()
         self.update_traffic_stats()
+        
+        # 2. 恢复挂件和锁定的记忆状态
+        self.show_widget_var.set(self.config.get("show_widget", "on"))
+        self.lock_widget_var.set(self.config.get("lock_widget", "off"))
         self.toggle_floating_widget()
+        self.toggle_widget_lock()
+        
+        # 3. 恢复网络模式记忆（静默重新应用，确保系统和 UI 状态绝对一致）
+        # 稍微延时 100 毫秒，等待 UI 渲染完毕再执行网络命令，避免卡顿
+        if self.config.get("is_game_mode", False):
+            self.after(100, lambda: self.set_game_mode(silent=True))
+        else:
+            self.after(100, lambda: self.set_normal_mode(silent=True))
+
+    def load_config(self):
+        """读取本地配置文件"""
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except:
+            pass
+        # 默认配置
+        return {"x": 100, "y": 100, "is_game_mode": False, "show_widget": "on", "lock_widget": "off"}
+
+    def save_config(self):
+        """保存当前配置到本地"""
+        try:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f)
+        except:
+            pass
 
     def setup_ui(self):
         main_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -241,6 +287,8 @@ class NetworkSwitcherApp(ctk.CTk):
         if self.set_metric(wifi, 10) and self.set_metric(eth, 50):
             self.floating_widget.set_visual_state(True) 
             self.sync_main_status(True)
+            self.config["is_game_mode"] = True
+            self.save_config()
             if not silent: messagebox.showinfo("成功", "【游戏模式】已开启！\n\n新连接已切换至 Wi-Fi 热点。")
         else:
             self.floating_widget.set_visual_state(False) 
@@ -254,6 +302,8 @@ class NetworkSwitcherApp(ctk.CTk):
         if self.set_metric(eth, 10) and self.set_metric(wifi, 50):
             self.floating_widget.set_visual_state(False) 
             self.sync_main_status(False)
+            self.config["is_game_mode"] = False
+            self.save_config()
             if not silent: messagebox.showinfo("成功", "【普通模式】已恢复！\n\n网络已切回有线优先。")
         else:
             self.floating_widget.set_visual_state(True) 
@@ -265,9 +315,13 @@ class NetworkSwitcherApp(ctk.CTk):
             self.floating_widget.win.deiconify()
         else:
             self.floating_widget.win.withdraw()
+        self.config["show_widget"] = self.show_widget_var.get()
+        self.save_config()
 
     def toggle_widget_lock(self):
         self.floating_widget.is_locked = (self.lock_widget_var.get() == "on")
+        self.config["lock_widget"] = self.lock_widget_var.get()
+        self.save_config()
 
     def format_speed(self, bytes_per_sec):
         if bytes_per_sec < 1024:
@@ -303,16 +357,13 @@ class NetworkSwitcherApp(ctk.CTk):
             
         self.after(1000, self.update_traffic_stats)
 
-    # === 完美提取内置图标 ===
     def get_unified_icon(self):
-        """精准提取 CustomTkinter 底层附带的默认蓝色窗口图标"""
         icon_path = os.path.join(os.path.dirname(ctk.__file__), "assets", "icons", "CustomTkinter_icon_Windows.ico")
         if os.path.exists(icon_path):
             try:
                 return Image.open(icon_path)
             except:
                 pass
-        # 极端情况下的后备方案 (基本用不到)
         image = Image.new('RGB', (64, 64), color=(31, 83, 141))
         draw = ImageDraw.Draw(image)
         draw.rectangle((20, 20, 44, 44), fill=(255, 255, 255))
@@ -323,7 +374,6 @@ class NetworkSwitcherApp(ctk.CTk):
             pystray.MenuItem('打开主控制台', self.show_window, default=True),
             pystray.MenuItem('完全退出', self.quit_app)
         )
-        # 直接使用提取出的原版蓝色图标
         self.tray_icon = pystray.Icon("NetSwitcher", self.get_unified_icon(), "YYY 分流系统", menu)
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
