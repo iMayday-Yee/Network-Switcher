@@ -32,28 +32,27 @@ class FloatingWidget:
         self.win = ctk.CTkToplevel(root)
         self.win.overrideredirect(True)
         
-        # 读取配置中的坐标，如果没有则默认 100, 100
         start_x = self.app.config.get("x", 100)
         start_y = self.app.config.get("y", 100)
         self.win.geometry(f"165x46+{start_x}+{start_y}")
-        self.win.attributes('-topmost', True)
         
-        # === 绿幕抠图法消除直角灰底 ===
-        transparent_color = "#000001" 
+        is_topmost = self.app.config.get("topmost_widget", "on") == "on"
+        self.win.attributes('-topmost', is_topmost)
+        
         if sys.platform.startswith("win"):
+            transparent_color = "#000001" 
             self.win.attributes("-transparentcolor", transparent_color)
             self.win.configure(fg_color=transparent_color)
+            self.win.attributes("-toolwindow", True)
         
         self.is_locked = False
         self._updating_visually = False
         
-        # 圆角底板
         self.frame = ctk.CTkFrame(self.win, corner_radius=23, fg_color="#2b2b2b", border_width=1, border_color="#444444")
         self.frame.pack(fill="both", expand=True)
         
         self.setup_ui()
         
-        # 绑定拖动事件
         self.frame.bind("<ButtonPress-1>", self.start_move)
         self.frame.bind("<ButtonRelease-1>", self.stop_move)
         self.frame.bind("<B1-Motion>", self.do_move)
@@ -83,7 +82,6 @@ class FloatingWidget:
         self.y = event.y
 
     def stop_move(self, event):
-        """鼠标松开时，保存最新坐标到配置文件"""
         if self.is_locked: return
         self.x = None
         self.y = None
@@ -129,8 +127,13 @@ class NetworkSwitcherApp(ctk.CTk):
         super().__init__()
         
         self.title("YYY Network 智能分流系统")
-        self.geometry("500x580")
+        self.geometry("500x600")
         self.resizable(False, False)
+        
+        # === 核心修复：强制注入窗口与任务栏图标 ===
+        icon_path = os.path.join(os.path.dirname(ctk.__file__), "assets", "icons", "CustomTkinter_icon_Windows.ico")
+        if os.path.exists(icon_path):
+            self.iconbitmap(icon_path)
         
         self.protocol('WM_DELETE_WINDOW', self.hide_window)
         
@@ -138,7 +141,6 @@ class NetworkSwitcherApp(ctk.CTk):
         self.last_net_io = psutil.net_io_counters(pernic=True)
         self.last_time = time.time()
         
-        # 1. 初始化配置记忆
         self.config = self.load_config()
         
         self.setup_tray_icon()
@@ -147,32 +149,27 @@ class NetworkSwitcherApp(ctk.CTk):
         self.setup_ui()
         self.update_traffic_stats()
         
-        # 2. 恢复挂件和锁定的记忆状态
         self.show_widget_var.set(self.config.get("show_widget", "on"))
         self.lock_widget_var.set(self.config.get("lock_widget", "off"))
+        self.topmost_widget_var.set(self.config.get("topmost_widget", "on"))
         self.toggle_floating_widget()
         self.toggle_widget_lock()
         
-        # 3. 恢复网络模式记忆（静默重新应用，确保系统和 UI 状态绝对一致）
-        # 稍微延时 100 毫秒，等待 UI 渲染完毕再执行网络命令，避免卡顿
         if self.config.get("is_game_mode", False):
             self.after(100, lambda: self.set_game_mode(silent=True))
         else:
             self.after(100, lambda: self.set_normal_mode(silent=True))
 
     def load_config(self):
-        """读取本地配置文件"""
         try:
             if os.path.exists(CONFIG_FILE):
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except:
             pass
-        # 默认配置
-        return {"x": 100, "y": 100, "is_game_mode": False, "show_widget": "on", "lock_widget": "off"}
+        return {"x": 100, "y": 100, "is_game_mode": False, "show_widget": "on", "lock_widget": "off", "topmost_widget": "on"}
 
     def save_config(self):
-        """保存当前配置到本地"""
         try:
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f)
@@ -186,7 +183,6 @@ class NetworkSwitcherApp(ctk.CTk):
         header_font = ("Microsoft YaHei", 14, "bold")
         header_color = "#e0e0e0"
 
-        # === 模块一：网络接口配置 ===
         frame_select = ctk.CTkFrame(main_frame, corner_radius=10)
         frame_select.pack(fill="x", pady=(0, 15))
         
@@ -205,7 +201,6 @@ class NetworkSwitcherApp(ctk.CTk):
         self.combo_eth.grid(row=1, column=1, padx=(20, 0), pady=5)
         self.auto_select_interface(self.combo_eth, ["以太网", "Ethernet", "本地连接"])
 
-        # === 模块二：模式切换与状态 ===
         frame_mode = ctk.CTkFrame(main_frame, corner_radius=10)
         frame_mode.pack(fill="x", pady=(0, 15))
         
@@ -227,7 +222,6 @@ class NetworkSwitcherApp(ctk.CTk):
                                    font=("Microsoft YaHei", 12, "bold"), command=self.set_normal_mode)
         btn_normal.pack(side="right", expand=True, fill="x", padx=(10, 0))
 
-        # === 模块三：实时网卡吞吐量监控 ===
         frame_monitor = ctk.CTkFrame(main_frame, corner_radius=10)
         frame_monitor.pack(fill="x", pady=(0, 15))
         
@@ -239,7 +233,6 @@ class NetworkSwitcherApp(ctk.CTk):
         self.lbl_eth_speed = ctk.CTkLabel(frame_monitor, text="🔌 正在初始化数据...", font=("Consolas", 13))
         self.lbl_eth_speed.pack(anchor="w", padx=15, pady=(2, 15))
 
-        # === 模块四：桌面悬浮窗设置 ===
         frame_widget = ctk.CTkFrame(main_frame, corner_radius=10)
         frame_widget.pack(fill="x", pady=(0, 0))
         
@@ -247,15 +240,22 @@ class NetworkSwitcherApp(ctk.CTk):
         
         self.show_widget_var = ctk.StringVar(value="on")
         self.lock_widget_var = ctk.StringVar(value="off")
+        self.topmost_widget_var = ctk.StringVar(value="on")
         
         switch_frame = ctk.CTkFrame(frame_widget, fg_color="transparent")
         switch_frame.pack(fill="x", padx=15, pady=(5, 15))
         
+        switch_frame.columnconfigure(0, weight=1)
+        switch_frame.columnconfigure(1, weight=1)
+        
         chk_show = ctk.CTkSwitch(switch_frame, text="启用悬浮快捷开关", variable=self.show_widget_var, onvalue="on", offvalue="off", command=self.toggle_floating_widget)
-        chk_show.pack(side="left")
+        chk_show.grid(row=0, column=0, sticky="w", pady=(0, 10))
         
         chk_lock = ctk.CTkSwitch(switch_frame, text="锁定悬浮窗位置", variable=self.lock_widget_var, onvalue="on", offvalue="off", command=self.toggle_widget_lock)
-        chk_lock.pack(side="right")
+        chk_lock.grid(row=0, column=1, sticky="w", pady=(0, 10))
+
+        chk_topmost = ctk.CTkSwitch(switch_frame, text="悬浮窗总在最前", variable=self.topmost_widget_var, onvalue="on", offvalue="off", command=self.toggle_widget_topmost)
+        chk_topmost.grid(row=1, column=0, sticky="w")
 
     def auto_select_interface(self, combobox, keywords):
         for iface in self.interfaces:
@@ -321,6 +321,12 @@ class NetworkSwitcherApp(ctk.CTk):
     def toggle_widget_lock(self):
         self.floating_widget.is_locked = (self.lock_widget_var.get() == "on")
         self.config["lock_widget"] = self.lock_widget_var.get()
+        self.save_config()
+
+    def toggle_widget_topmost(self):
+        is_top = (self.topmost_widget_var.get() == "on")
+        self.floating_widget.win.attributes('-topmost', is_top)
+        self.config["topmost_widget"] = self.topmost_widget_var.get()
         self.save_config()
 
     def format_speed(self, bytes_per_sec):
@@ -391,6 +397,13 @@ if __name__ == "__main__":
     if not is_admin():
         ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
         sys.exit()
+        
+    # === 核心修复：强制向 Windows 宣告这是一个独立的 App，不再使用 Python 图标合并任务栏 ===
+    try:
+        myappid = 'yyy.network.switcher.1.0'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
         
     app = NetworkSwitcherApp()
     app.mainloop()
