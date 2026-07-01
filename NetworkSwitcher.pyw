@@ -130,7 +130,6 @@ class NetworkSwitcherApp(ctk.CTk):
         self.geometry("500x600")
         self.resizable(False, False)
         
-        # === 核心修复：强制注入窗口与任务栏图标 ===
         icon_path = os.path.join(os.path.dirname(ctk.__file__), "assets", "icons", "CustomTkinter_icon_Windows.ico")
         if os.path.exists(icon_path):
             self.iconbitmap(icon_path)
@@ -167,7 +166,8 @@ class NetworkSwitcherApp(ctk.CTk):
                     return json.load(f)
         except:
             pass
-        return {"x": 100, "y": 100, "is_game_mode": False, "show_widget": "on", "lock_widget": "off", "topmost_widget": "on"}
+        # 新增 last_wifi 和 last_eth 用于记忆上次修改过的网卡
+        return {"x": 100, "y": 100, "is_game_mode": False, "show_widget": "on", "lock_widget": "off", "topmost_widget": "on", "last_wifi": "", "last_eth": ""}
 
     def save_config(self):
         try:
@@ -191,15 +191,25 @@ class NetworkSwitcherApp(ctk.CTk):
         grid_frame = ctk.CTkFrame(frame_select, fg_color="transparent")
         grid_frame.pack(fill="x", padx=15, pady=(0, 15))
 
+        # 【体验优化】初始化下拉框时，优先读取配置文件里上次成功使用的网卡
+        default_wifi = self.config.get("last_wifi")
+        default_eth = self.config.get("last_eth")
+
         ctk.CTkLabel(grid_frame, text="无线网络 (Wi-Fi):").grid(row=0, column=0, sticky="w", pady=5)
         self.combo_wifi = ctk.CTkOptionMenu(grid_frame, values=self.interfaces if self.interfaces else ["未找到网卡"], width=220)
         self.combo_wifi.grid(row=0, column=1, padx=(20, 0), pady=5)
-        self.auto_select_interface(self.combo_wifi, ["WLAN", "Wi-Fi", "无线网络连接"])
+        if default_wifi in self.interfaces:
+            self.combo_wifi.set(default_wifi)
+        else:
+            self.auto_select_interface(self.combo_wifi, ["WLAN", "Wi-Fi", "无线网络连接"])
 
         ctk.CTkLabel(grid_frame, text="有线网络 (Ethernet):").grid(row=1, column=0, sticky="w", pady=5)
         self.combo_eth = ctk.CTkOptionMenu(grid_frame, values=self.interfaces if self.interfaces else ["未找到网卡"], width=220)
         self.combo_eth.grid(row=1, column=1, padx=(20, 0), pady=5)
-        self.auto_select_interface(self.combo_eth, ["以太网", "Ethernet", "本地连接"])
+        if default_eth in self.interfaces:
+            self.combo_eth.set(default_eth)
+        else:
+            self.auto_select_interface(self.combo_eth, ["以太网", "Ethernet", "本地连接"])
 
         frame_mode = ctk.CTkFrame(main_frame, corner_radius=10)
         frame_mode.pack(fill="x", pady=(0, 15))
@@ -274,6 +284,32 @@ class NetworkSwitcherApp(ctk.CTk):
         except:
             return False
 
+    # === 新增：擦除废弃网卡的静态跃点数，恢复 Windows 默认自动模式 ===
+    def reset_metric_to_auto(self, interface_name):
+        try:
+            # 只有 PowerShell 支持最干净的自动跃点数恢复
+            cmd = f'powershell -WindowStyle Hidden -Command "Set-NetIPInterface -InterfaceAlias \'{interface_name}\' -AutomaticMetric Enabled"'
+            subprocess.run(cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
+        except:
+            pass
+
+    def cleanup_old_interfaces(self, current_wifi, current_eth):
+        """对比并洗白被误操作或更换掉的旧网卡"""
+        last_wifi = self.config.get("last_wifi")
+        last_eth = self.config.get("last_eth")
+        
+        # 如果旧的 Wi-Fi 网卡和现在的两个网卡都不一样，说明它被抛弃了，恢复它的跃点数
+        if last_wifi and last_wifi != current_wifi and last_wifi != current_eth:
+            self.reset_metric_to_auto(last_wifi)
+            
+        # 同理清理旧的有线网卡
+        if last_eth and last_eth != current_eth and last_eth != current_wifi:
+            self.reset_metric_to_auto(last_eth)
+            
+        # 记录这次最终生效的新网卡
+        self.config["last_wifi"] = current_wifi
+        self.config["last_eth"] = current_eth
+
     def sync_main_status(self, is_game_mode):
         if is_game_mode:
             self.lbl_main_status.configure(text="当前状态：🎮 游戏模式 (热点优先)", text_color="#ff5252")
@@ -285,6 +321,7 @@ class NetworkSwitcherApp(ctk.CTk):
         eth = self.combo_eth.get()
         
         if self.set_metric(wifi, 10) and self.set_metric(eth, 50):
+            self.cleanup_old_interfaces(wifi, eth) # <--- 执行清理脏状态
             self.floating_widget.set_visual_state(True) 
             self.sync_main_status(True)
             self.config["is_game_mode"] = True
@@ -300,6 +337,7 @@ class NetworkSwitcherApp(ctk.CTk):
         eth = self.combo_eth.get()
             
         if self.set_metric(eth, 10) and self.set_metric(wifi, 50):
+            self.cleanup_old_interfaces(wifi, eth) # <--- 执行清理脏状态
             self.floating_widget.set_visual_state(False) 
             self.sync_main_status(False)
             self.config["is_game_mode"] = False
